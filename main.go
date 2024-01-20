@@ -49,10 +49,6 @@ import (
 	"github.com/prometheus/pushgateway/storage"
 )
 
-func init() {
-	prometheus.MustRegister(version.NewCollector("pushgateway"))
-}
-
 // logFunc in an adaptor to plug gokit logging into promhttp.HandlerOpts.
 type logFunc func(...interface{}) error
 
@@ -103,7 +99,6 @@ func main() {
 
 	// Create a Gatherer combining the DefaultGatherer and the metrics from the metric store.
 	g := prometheus.Gatherers{
-		prometheus.DefaultGatherer,
 		prometheus.GathererFunc(func() ([]*dto.MetricFamily, error) { return ms.GetMetricFamilies(), nil }),
 	}
 

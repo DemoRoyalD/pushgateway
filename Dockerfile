@@ -1,16 +1,13 @@
-ARG ARCH="amd64"
-ARG OS="linux"
-FROM quay.io/prometheus/busybox-${OS}-${ARCH}:latest
-LABEL maintainer="The Prometheus Authors <prometheus-developers@googlegroups.com>"
+FROM golang:1.20.2-bullseye AS builder
+WORKDIR /build
+ENV GOPROXY https://goproxy.cn
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
 
-ARG ARCH="amd64"
-ARG OS="linux"
-COPY --chown=nobody:nobody .build/${OS}-${ARCH}/pushgateway /bin/pushgateway
+COPY . .
+RUN go build -v -o pushgateway main.go
 
-EXPOSE 9091
-RUN mkdir -p /pushgateway && chown nobody:nobody /pushgateway
-WORKDIR /pushgateway
-
-USER 65534
-
-ENTRYPOINT [ "/bin/pushgateway" ]
+FROM debian:bullseye-slim AS runner
+WORKDIR /app
+COPY --from=builder /build/pushgateway /app/
+ENTRYPOINT [ "/app/pushgateway" ]
