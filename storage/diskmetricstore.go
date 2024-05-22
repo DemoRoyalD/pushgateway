@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -48,14 +47,15 @@ var errTimestamp = errors.New("pushed metrics must not have timestamps")
 // DiskMetricStore is an implementation of MetricStore that persists metrics to
 // disk.
 type DiskMetricStore struct {
-	lock            sync.RWMutex // Protects metricFamilies.
-	writeQueue      chan WriteRequest
-	drain           chan struct{}
-	done            chan error
-	metricGroups    GroupingKeyToMetricGroup
-	persistenceFile string
-	predefinedHelp  map[string]string
-	logger          log.Logger
+	lock                       sync.RWMutex // Protects metricFamilies.
+	writeQueue                 chan WriteRequest
+	drain                      chan struct{}
+	done                       chan error
+	metricGroups               GroupingKeyToMetricGroup
+	persistenceFile            string
+	metricExpireIntervalSecond float64
+	predefinedHelp             map[string]string
+	logger                     log.Logger
 }
 
 type mfStat struct {
@@ -76,21 +76,17 @@ type mfStat struct {
 // If a non-nil Gatherer is provided, the help strings of metrics gathered by it
 // will be used as standard. Pushed metrics with deviating help strings will be
 // adjusted to avoid inconsistent expositions.
-func NewDiskMetricStore(
-	persistenceFile string,
-	persistenceInterval time.Duration,
-	gatherPredefinedHelpFrom prometheus.Gatherer,
-	logger log.Logger,
-) *DiskMetricStore {
+func NewDiskMetricStore(persistenceFile string, persistenceInterval time.Duration, gatherPredefinedHelpFrom prometheus.Gatherer, logger log.Logger, metricExpireIntervalSecond float64) *DiskMetricStore {
 	// TODO: Do that outside of the constructor to allow the HTTP server to
 	//  serve /-/healthy and /-/ready earlier.
 	dms := &DiskMetricStore{
-		writeQueue:      make(chan WriteRequest, writeQueueCapacity),
-		drain:           make(chan struct{}),
-		done:            make(chan error),
-		metricGroups:    GroupingKeyToMetricGroup{},
-		persistenceFile: persistenceFile,
-		logger:          logger,
+		writeQueue:                 make(chan WriteRequest, writeQueueCapacity),
+		drain:                      make(chan struct{}),
+		done:                       make(chan error),
+		metricGroups:               GroupingKeyToMetricGroup{},
+		persistenceFile:            persistenceFile,
+		metricExpireIntervalSecond: metricExpireIntervalSecond,
+		logger:                     logger,
 	}
 	if err := dms.restore(); err != nil {
 		level.Error(logger).Log("msg", "could not load persisted metrics", "err", err)
@@ -146,6 +142,11 @@ func (dms *DiskMetricStore) GetMetricFamilies() []*dto.MetricFamily {
 
 	for _, group := range dms.metricGroups {
 		for name, tmf := range group.Metrics {
+			now := time.Now()
+			lastPushTs := tmf.Timestamp
+			if now.Sub(lastPushTs).Seconds() > dms.metricExpireIntervalSecond {
+				continue
+			}
 			mf := tmf.GetMetricFamily()
 			if mf == nil {
 				level.Warn(dms.logger).Log("msg", "storage corruption detected, consider wiping the persistence file")
@@ -203,34 +204,34 @@ func (dms *DiskMetricStore) GetMetricFamiliesMap() GroupingKeyToMetricGroup {
 }
 
 func (dms *DiskMetricStore) loop(persistenceInterval time.Duration) {
-	lastPersist := time.Now()
-	persistScheduled := false
-	lastWrite := time.Time{}
+	//lastPersist := time.Now()
+	//persistScheduled := false
+	//lastWrite := time.Time{}
 	persistDone := make(chan time.Time)
 	var persistTimer *time.Timer
 
-	checkPersist := func() {
-		if dms.persistenceFile != "" && !persistScheduled && lastWrite.After(lastPersist) {
-			persistTimer = time.AfterFunc(
-				persistenceInterval-lastWrite.Sub(lastPersist),
-				func() {
-					persistStarted := time.Now()
-					if err := dms.persist(); err != nil {
-						level.Error(dms.logger).Log("msg", "error persisting metrics", "err", err)
-					} else {
-						level.Info(dms.logger).Log("msg", "metrics persisted", "file", dms.persistenceFile)
-					}
-					persistDone <- persistStarted
-				},
-			)
-			persistScheduled = true
-		}
-	}
+	//checkPersist := func() {
+	//	if dms.persistenceFile != "" && !persistScheduled && lastWrite.After(lastPersist) {
+	//		persistTimer = time.AfterFunc(
+	//			persistenceInterval-lastWrite.Sub(lastPersist),
+	//			func() {
+	//				persistStarted := time.Now()
+	//				if err := dms.persist(); err != nil {
+	//					level.Error(dms.logger).Log("msg", "error persisting metrics", "err", err)
+	//				} else {
+	//					level.Info(dms.logger).Log("msg", "metrics persisted", "file", dms.persistenceFile)
+	//				}
+	//				persistDone <- persistStarted
+	//			},
+	//		)
+	//		persistScheduled = true
+	//	}
+	//}
 
 	for {
 		select {
 		case wr := <-dms.writeQueue:
-			lastWrite = time.Now()
+			//lastWrite = time.Now()
 			if dms.checkWriteRequest(wr) {
 				dms.processWriteRequest(wr)
 			} else {
@@ -239,10 +240,10 @@ func (dms *DiskMetricStore) loop(persistenceInterval time.Duration) {
 			if wr.Done != nil {
 				close(wr.Done)
 			}
-			checkPersist()
-		case lastPersist = <-persistDone:
-			persistScheduled = false
-			checkPersist() // In case something has been written in the meantime.
+			//checkPersist()
+		case <-persistDone:
+			//persistScheduled = false
+			//checkPersist() // In case something has been written in the meantime.
 		case <-dms.drain:
 			// Prevent a scheduled persist from firing later.
 			if persistTimer != nil {
@@ -301,6 +302,7 @@ func (dms *DiskMetricStore) processWriteRequest(wr WriteRequest) {
 	if _, ok := group.Metrics[pushFailedMetricName]; !ok {
 		wr.MetricFamilies[pushFailedMetricName] = newPushFailedTimestampGauge(wr.Labels, time.Time{})
 	}
+
 	for name, mf := range wr.MetricFamilies {
 		group.Metrics[name] = TimestampedMetricFamily{
 			Timestamp:            wr.Timestamp,
@@ -396,35 +398,38 @@ func (dms *DiskMetricStore) checkWriteRequest(wr WriteRequest) bool {
 	return true
 }
 
+// persist don't support metric persist
 func (dms *DiskMetricStore) persist() error {
 	// Check (again) if persistence is configured because some code paths
 	// will call this method even if it is not.
-	if dms.persistenceFile == "" {
-		return nil
-	}
-	f, err := os.CreateTemp(
-		path.Dir(dms.persistenceFile),
-		path.Base(dms.persistenceFile)+".in_progress.",
-	)
-	if err != nil {
-		return err
-	}
-	inProgressFileName := f.Name()
-	e := gob.NewEncoder(f)
 
-	dms.lock.RLock()
-	err = e.Encode(dms.metricGroups)
-	dms.lock.RUnlock()
-	if err != nil {
-		f.Close()
-		os.Remove(inProgressFileName)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(inProgressFileName)
-		return err
-	}
-	return os.Rename(inProgressFileName, dms.persistenceFile)
+	//if dms.persistenceFile == "" {
+	//	return nil
+	//}
+	//f, err := os.CreateTemp(
+	//	path.Dir(dms.persistenceFile),
+	//	path.Base(dms.persistenceFile)+".in_progress.",
+	//)
+	//if err != nil {
+	//	return err
+	//}
+	//inProgressFileName := f.Name()
+	//e := gob.NewEncoder(f)
+	//
+	//dms.lock.RLock()
+	//err = e.Encode(dms.metricGroups)
+	//dms.lock.RUnlock()
+	//if err != nil {
+	//	f.Close()
+	//	os.Remove(inProgressFileName)
+	//	return err
+	//}
+	//if err := f.Close(); err != nil {
+	//	os.Remove(inProgressFileName)
+	//	return err
+	//}
+	//return os.Rename(inProgressFileName, dms.persistenceFile)
+	return nil
 }
 
 func (dms *DiskMetricStore) restore() error {
