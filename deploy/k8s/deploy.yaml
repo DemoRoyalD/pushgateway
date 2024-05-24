@@ -2,9 +2,9 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: pushgateway
-  namespace: devtool
+  namespace: devtoolv2
 spec:
-  serviceName: pushgateway-cluster-svc
+  serviceName: pushgateway-svc
   replicas: 1
   selector:
     matchLabels:
@@ -16,15 +16,15 @@ spec:
     spec:
       containers:
         - name: pushgateway
-          image: pushgateway:v1.0.0-amd
+          image: 10.10.102.213:8443/cloudnevro/pushgateway:v1.0.0-nopersist
           imagePullPolicy: Always
           resources:
             requests:
-              cpu: "500m"
-              memory: "200Mi"
+              cpu: "300m"
+              memory: "100Mi"
             limits:
-              cpu: "500m"
-              memory: "200Mi"
+              cpu: "300m"
+              memory: "100Mi"
           ports:
             - name: http
               containerPort: 9091
@@ -36,7 +36,7 @@ metadata:
   labels:
     name: pushgateway
   name: pushgateway-svc
-  namespace: devtool
+  namespace: devtoolv2
 spec:
   ports:
     - name: port1
@@ -47,23 +47,3 @@ spec:
     name: pushgateway
   type: ClusterIP
 
----
-apiVersion: v1
-kind: Service
-metadata:
-  labels:
-    name: pushgateway
-  name: pushgateway-cluster-svc
-  namespace: devtool
-spec:
-  clusterIP: None
-  ports:
-    - name: port1
-      port: 9091
-      protocol: TCP
-      targetPort: 9091
-  selector:
-    name: pushgateway
-  type: ClusterIP
-
----
