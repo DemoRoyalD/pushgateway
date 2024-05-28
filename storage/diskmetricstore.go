@@ -88,9 +88,9 @@ func NewDiskMetricStore(persistenceFile string, persistenceInterval time.Duratio
 		metricExpireIntervalSecond: metricExpireIntervalSecond,
 		logger:                     logger,
 	}
-	if err := dms.restore(); err != nil {
-		level.Error(logger).Log("msg", "could not load persisted metrics", "err", err)
-	}
+	// if err := dms.restore(); err != nil {
+	// 	level.Error(logger).Log("msg", "could not load persisted metrics", "err", err)
+	// }
 	if helpStrings, err := extractPredefinedHelpStrings(gatherPredefinedHelpFrom); err == nil {
 		dms.predefinedHelp = helpStrings
 	} else {
