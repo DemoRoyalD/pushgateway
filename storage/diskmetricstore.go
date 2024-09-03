@@ -208,7 +208,7 @@ func (dms *DiskMetricStore) GetMetricFamiliesMap() GroupingKeyToMetricGroup {
 }
 
 func (dms *DiskMetricStore) removeHistoryData() {
-	timer := time.NewTicker(60 * time.Second)
+	timer := time.NewTicker(10 * time.Minute)
 	for {
 		select {
 		case <-timer.C:
@@ -238,6 +238,17 @@ func (dms *DiskMetricStore) doRemoveHistoryData() {
 	for _, key := range expireMetricJobKeys {
 		keyArr := strings.Split(key, "#&#")
 		delete(dms.metricGroups[keyArr[0]].Metrics, keyArr[1])
+	}
+
+	expireMetricGroupKeys := make([]string, 0)
+	for idx, group := range dms.metricGroups {
+		if len(group.Metrics) == 0 {
+			expireMetricGroupKeys = append(expireMetricGroupKeys, idx)
+		}
+	}
+
+	for _, key := range expireMetricGroupKeys {
+		delete(dms.metricGroups, key)
 	}
 }
 
