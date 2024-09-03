@@ -53,7 +53,8 @@ type DiskMetricStore struct {
 	done                       chan error
 	metricGroups               GroupingKeyToMetricGroup
 	persistenceFile            string
-	metricExpireIntervalSecond float64
+	metricExpireIntervalSecond time.Duration
+	removeExpireIntervalSecond time.Duration
 	predefinedHelp             map[string]string
 	logger                     log.Logger
 }
@@ -76,7 +77,8 @@ type mfStat struct {
 // If a non-nil Gatherer is provided, the help strings of metrics gathered by it
 // will be used as standard. Pushed metrics with deviating help strings will be
 // adjusted to avoid inconsistent expositions.
-func NewDiskMetricStore(persistenceFile string, persistenceInterval time.Duration, gatherPredefinedHelpFrom prometheus.Gatherer, logger log.Logger, metricExpireIntervalSecond float64) *DiskMetricStore {
+func NewDiskMetricStore(persistenceFile string, persistenceInterval time.Duration, gatherPredefinedHelpFrom prometheus.Gatherer,
+	logger log.Logger, metricExpireIntervalSecond, removeExpireIntervalSecond time.Duration) *DiskMetricStore {
 	// TODO: Do that outside of the constructor to allow the HTTP server to
 	//  serve /-/healthy and /-/ready earlier.
 	dms := &DiskMetricStore{
@@ -86,6 +88,7 @@ func NewDiskMetricStore(persistenceFile string, persistenceInterval time.Duratio
 		metricGroups:               GroupingKeyToMetricGroup{},
 		persistenceFile:            persistenceFile,
 		metricExpireIntervalSecond: metricExpireIntervalSecond,
+		removeExpireIntervalSecond: removeExpireIntervalSecond,
 		logger:                     logger,
 	}
 	// if err := dms.restore(); err != nil {
@@ -98,6 +101,7 @@ func NewDiskMetricStore(persistenceFile string, persistenceInterval time.Duratio
 	}
 
 	go dms.loop(persistenceInterval)
+	go dms.removeHistoryData()
 	return dms
 }
 
@@ -144,7 +148,7 @@ func (dms *DiskMetricStore) GetMetricFamilies() []*dto.MetricFamily {
 		for name, tmf := range group.Metrics {
 			now := time.Now()
 			lastPushTs := tmf.Timestamp
-			if now.Sub(lastPushTs).Seconds() > dms.metricExpireIntervalSecond {
+			if now.Sub(lastPushTs).Seconds() > dms.metricExpireIntervalSecond.Seconds() {
 				continue
 			}
 			mf := tmf.GetMetricFamily()
@@ -201,6 +205,40 @@ func (dms *DiskMetricStore) GetMetricFamiliesMap() GroupingKeyToMetricGroup {
 		}
 	}
 	return groupsCopy
+}
+
+func (dms *DiskMetricStore) removeHistoryData() {
+	timer := time.NewTicker(60 * time.Second)
+	for {
+		select {
+		case <-timer.C:
+			dms.doRemoveHistoryData()
+		}
+	}
+}
+
+func (dms *DiskMetricStore) doRemoveHistoryData() {
+	dms.lock.Lock()
+	defer dms.lock.Unlock()
+
+	expireMetricJobKeys := make([]string, 0)
+
+	for idx, group := range dms.metricGroups {
+		for name, tmf := range group.Metrics {
+			now := time.Now()
+			lastPushTs := tmf.Timestamp
+			if now.Sub(lastPushTs).Seconds() > dms.removeExpireIntervalSecond.Seconds() {
+				expireMetricJobKeys = append(expireMetricJobKeys, fmt.Sprintf("%s#&#%s", idx, name))
+				continue
+			}
+		}
+	}
+
+	// remove history data
+	for _, key := range expireMetricJobKeys {
+		keyArr := strings.Split(key, "#&#")
+		delete(dms.metricGroups[keyArr[0]].Metrics, keyArr[1])
+	}
 }
 
 func (dms *DiskMetricStore) loop(persistenceInterval time.Duration) {

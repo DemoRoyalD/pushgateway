@@ -58,17 +58,18 @@ func (lf logFunc) Println(v ...interface{}) {
 
 func main() {
 	var (
-		app                  = kingpin.New(filepath.Base(os.Args[0]), "The Pushgateway")
-		webConfig            = webflag.AddFlags(app, ":9091")
-		metricsPath          = app.Flag("web.telemetry-path", "Path under which to expose metrics.").Default("/metrics").String()
-		externalURL          = app.Flag("web.external-url", "The URL under which the Pushgateway is externally reachable.").Default("").URL()
-		routePrefix          = app.Flag("web.route-prefix", "Prefix for the internal routes of web endpoints. Defaults to the path of --web.external-url.").Default("").String()
-		enableLifeCycle      = app.Flag("web.enable-lifecycle", "Enable shutdown via HTTP request.").Default("false").Bool()
-		enableAdminAPI       = app.Flag("web.enable-admin-api", "Enable API endpoints for admin control actions.").Default("false").Bool()
-		persistenceFile      = app.Flag("persistence.file", "File to persist metrics. If empty, metrics are only kept in memory.").Default("").String()
-		persistenceInterval  = app.Flag("persistence.interval", "The minimum interval at which to write out the persistence file.").Default("5m").Duration()
-		pushUnchecked        = app.Flag("push.disable-consistency-check", "Do not check consistency of pushed metrics. DANGEROUS.").Default("false").Bool()
-		metricExpireInterval = app.Flag("metric.expire.interval", "metric expire time interval.").Default("65").Float64()
+		app                        = kingpin.New(filepath.Base(os.Args[0]), "The Pushgateway")
+		webConfig                  = webflag.AddFlags(app, ":9091")
+		metricsPath                = app.Flag("web.telemetry-path", "Path under which to expose metrics.").Default("/metrics").String()
+		externalURL                = app.Flag("web.external-url", "The URL under which the Pushgateway is externally reachable.").Default("").URL()
+		routePrefix                = app.Flag("web.route-prefix", "Prefix for the internal routes of web endpoints. Defaults to the path of --web.external-url.").Default("").String()
+		enableLifeCycle            = app.Flag("web.enable-lifecycle", "Enable shutdown via HTTP request.").Default("false").Bool()
+		enableAdminAPI             = app.Flag("web.enable-admin-api", "Enable API endpoints for admin control actions.").Default("false").Bool()
+		persistenceFile            = app.Flag("persistence.file", "File to persist metrics. If empty, metrics are only kept in memory.").Default("").String()
+		persistenceInterval        = app.Flag("persistence.interval", "The minimum interval at which to write out the persistence file.").Default("5m").Duration()
+		pushUnchecked              = app.Flag("push.disable-consistency-check", "Do not check consistency of pushed metrics. DANGEROUS.").Default("false").Bool()
+		metricExpireInterval       = app.Flag("metric.expire.interval", "metric expire time interval.").Default("65s").Duration()
+		metricRemoveExpireInterval = app.Flag("metric.expire.remove.interval", "metric expire time interval.").Default("1h").Duration()
 
 		promlogConfig = promlog.Config{}
 	)
@@ -97,7 +98,7 @@ func main() {
 		}
 	}
 
-	ms := storage.NewDiskMetricStore(*persistenceFile, *persistenceInterval, prometheus.DefaultGatherer, logger, *metricExpireInterval)
+	ms := storage.NewDiskMetricStore(*persistenceFile, *persistenceInterval, prometheus.DefaultGatherer, logger, *metricExpireInterval, *metricRemoveExpireInterval)
 
 	// Create a Gatherer combining the DefaultGatherer and the metrics from the metric store.
 	g := prometheus.Gatherers{

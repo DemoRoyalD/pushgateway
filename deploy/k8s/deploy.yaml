@@ -18,6 +18,8 @@ spec:
         - name: pushgateway
           image: 10.10.102.213:8443/cloudnevro/pushgateway:v1.0.0-nopersist
           imagePullPolicy: Always
+          args:
+            - "--metric.expire.interval=60s --metric.expire.remove.interval=1h"
           resources:
             requests:
               cpu: "300m"
